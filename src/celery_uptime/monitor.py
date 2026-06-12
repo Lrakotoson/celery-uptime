@@ -9,7 +9,22 @@ from typing import Any
 
 from celery import Celery, signals
 
-from celery_uptime.checks import HealthCheck, redis_check, sqs_check, unsupported_check
+from celery_uptime.checks import (
+    HealthCheck,
+    broker_connection_check,
+    cassandra_check,
+    database_check,
+    disabled_backend_check,
+    django_cache_check,
+    django_database_check,
+    elasticsearch_check,
+    memcache_check,
+    mongodb_check,
+    redis_check,
+    redis_sentinel_check,
+    sqs_check,
+    unsupported_check,
+)
 from celery_uptime.server import HealthState, UvicornHealthServer, create_health_app
 
 
@@ -151,53 +166,108 @@ def _auto_broker_check(celery_app: Celery) -> HealthCheck:
     if not broker_url:
         return unsupported_check("broker", "missing_config:broker_url")
 
-    if broker_url.startswith("redis://") or broker_url.startswith("rediss://"):
+    scheme = _scheme(broker_url)
+
+    if scheme in {"amqp", "pyamqp", "librabbitmq", "kafka", "confluentkafka"}:
+        return broker_connection_check("broker", celery_app)
+
+    if scheme in {"redis", "rediss"}:
         return redis_check("broker", broker_url)
 
-    if broker_url.startswith("sqs://"):
+    if scheme == "sentinel":
         options = dict(celery_app.conf.broker_transport_options or {})
-        queue_url = _sqs_queue_url(celery_app, options)
-        access_key = options.get("aws_access_key_id") or options.get("access_key_id")
-        secret_key = options.get("aws_secret_access_key") or options.get("secret_access_key")
+        return redis_sentinel_check(
+            "broker",
+            _urls(celery_app.conf.broker_url),
+            master_name=options.get("master_name"),
+            sentinel_kwargs=options.get("sentinel_kwargs"),
+        )
+
+    if scheme == "sqs":
+        options = dict(celery_app.conf.broker_transport_options or {})
+        queue_config = _sqs_queue_config(celery_app, options)
         return sqs_check(
             "broker",
             endpoint_url=options.get("endpoint_url"),
             region=options.get("region"),
-            queue_url=queue_url,
-            access_key=access_key,
-            secret_key=secret_key,
+            queue_url=queue_config.get("url") or options.get("queue_url"),
+            access_key=(
+                queue_config.get("aws_access_key_id")
+                or queue_config.get("access_key_id")
+                or options.get("aws_access_key_id")
+                or options.get("access_key_id")
+            ),
+            secret_key=(
+                queue_config.get("aws_secret_access_key")
+                or queue_config.get("secret_access_key")
+                or options.get("aws_secret_access_key")
+                or options.get("secret_access_key")
+            ),
         )
 
-    return unsupported_check("broker", f"unsupported_broker:{_scheme(broker_url)}")
+    return unsupported_check("broker", f"unsupported_broker:{scheme}")
 
 
 def _auto_backend_check(celery_app: Celery) -> HealthCheck:
     backend_url = _first_url(celery_app.conf.result_backend)
     if not backend_url:
-        return unsupported_check("backend", "missing_config:result_backend")
+        return disabled_backend_check("backend")
 
-    if backend_url.startswith("redis://") or backend_url.startswith("rediss://"):
+    scheme = _backend_scheme(backend_url)
+
+    if scheme == "disabled":
+        return disabled_backend_check("backend")
+
+    if scheme in {"redis", "rediss"}:
         return redis_check("backend", backend_url)
 
-    if backend_url in {"disabled://", "rpc://"}:
-        return unsupported_check("backend", f"unsupported_backend:{_scheme(backend_url)}")
+    if scheme == "sentinel":
+        options = dict(getattr(celery_app.conf, "result_backend_transport_options", None) or {})
+        return redis_sentinel_check(
+            "backend",
+            _urls(celery_app.conf.result_backend),
+            master_name=options.get("master_name"),
+            sentinel_kwargs=options.get("sentinel_kwargs"),
+        )
 
-    return unsupported_check("backend", f"unsupported_backend:{_scheme(backend_url)}")
+    if scheme in {"db", "database"}:
+        return database_check("backend", backend_url)
+
+    if scheme == "django-db":
+        return django_database_check("backend")
+
+    if scheme == "django-cache":
+        return django_cache_check("backend")
+
+    if scheme == "rpc":
+        return broker_connection_check("backend", celery_app, required=False, success_detail="rpc_via_broker")
+
+    if scheme == "cache" and _cache_backend_kind(backend_url) in {"memcached", "pymemcache", "pylibmc"}:
+        return memcache_check("backend", backend_url)
+
+    if scheme in {"mongodb", "mongodb+srv"}:
+        return mongodb_check("backend", backend_url)
+
+    if scheme == "elasticsearch":
+        return elasticsearch_check("backend", backend_url)
+
+    if scheme == "cassandra":
+        return cassandra_check("backend", backend_url)
+
+    return unsupported_check("backend", f"unsupported_backend:{scheme}")
 
 
-def _sqs_queue_url(celery_app: Celery, options: dict[str, Any]) -> str | None:
+def _sqs_queue_config(celery_app: Celery, options: dict[str, Any]) -> dict[str, Any]:
     predefined_queues = options.get("predefined_queues") or {}
     default_queue = celery_app.conf.task_default_queue
 
     if default_queue in predefined_queues:
-        queue_config = predefined_queues[default_queue] or {}
-        return queue_config.get("url")
+        return predefined_queues[default_queue] or {}
 
     if len(predefined_queues) == 1:
-        queue_config = next(iter(predefined_queues.values())) or {}
-        return queue_config.get("url")
+        return next(iter(predefined_queues.values())) or {}
 
-    return options.get("queue_url")
+    return {}
 
 
 def _first_url(value: str | Sequence[str] | None) -> str | None:
@@ -208,8 +278,32 @@ def _first_url(value: str | Sequence[str] | None) -> str | None:
     return None
 
 
+def _urls(value: str | Sequence[str] | None) -> str | list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return list(value)
+
+
 def _scheme(url: str) -> str:
     return url.split(":", 1)[0] if ":" in url else "unknown"
+
+
+def _backend_scheme(url: str) -> str:
+    if "://" not in url:
+        return url
+    scheme = _scheme(url)
+    if "+" in scheme:
+        return scheme.split("+", 1)[0]
+    return scheme
+
+
+def _cache_backend_kind(url: str) -> str:
+    scheme = _scheme(url)
+    if "+" not in scheme:
+        return ""
+    return scheme.split("+", 1)[1]
 
 
 def _env_bool(name: str, default: bool) -> bool:
