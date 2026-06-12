@@ -21,6 +21,31 @@ celery -A my_service.celery_app worker --loglevel=info
 The package starts an embedded Uvicorn server from Celery lifecycle signals. It
 starts on `worker_ready` for workers and `beat_init` for beat.
 
+## Installation
+
+The base package only installs Celery, FastAPI, and Uvicorn. Install the extras
+matching the providers your Celery app already uses:
+
+```bash
+pip install "celery-uptime[redis,sqs]"
+```
+
+Available extras:
+
+- `redis`: Redis broker/backend and Redis Sentinel.
+- `sqs`: SQS broker.
+- `kafka`: Kafka broker through Kombu's Confluent Kafka transport.
+- `sqlalchemy`: SQLAlchemy/database result backend.
+- `django`: Django database/cache result backends.
+- `mongodb`: MongoDB result backend.
+- `elasticsearch`: Elasticsearch result backend.
+- `cassandra`: Cassandra result backend.
+- `memcache`: Memcached cache result backend.
+- `all`: all optional provider dependencies.
+
+Missing provider dependencies do not crash the monitor. `/ready` returns a
+failing check with details such as `missing_extra:mongodb`.
+
 ## Endpoints
 
 - `GET /health`: returns process/server liveness.
@@ -73,19 +98,35 @@ services:
 
 `monitor(app)` automatically detects:
 
-- Redis broker from `broker_url=redis://...`
-- Redis result backend from `result_backend=redis://...`
-- SQS broker from `broker_url=sqs://` and `broker_transport_options`
+- RabbitMQ/AMQP broker: `amqp://`, `pyamqp://`, `librabbitmq://`.
+- Redis broker/backend: `redis://`, `rediss://`.
+- Redis Sentinel broker/backend: `sentinel://` with `master_name`.
+- SQS broker: `sqs://` with `broker_transport_options`.
+- Kafka broker: `kafka://`, `confluentkafka://`.
+- SQLAlchemy/database backend: `db+...`, `database+...`.
+- Django backend conventions: `django-db`, `django-cache`.
+- RPC backend: `rpc://`, checked through broker connectivity.
+- Memcached backend: `cache+memcached://`, `cache+pymemcache://`, `cache+pylibmc://`.
+- MongoDB backend: `mongodb://`, `mongodb+srv://`.
+- Elasticsearch backend: `elasticsearch://`.
+- Cassandra backend: `cassandra://`.
 
-Unsupported or missing broker/backend configuration fails closed in `/ready`
-with HTTP `503`.
+No result backend is valid Celery configuration. If `result_backend` is absent
+or `disabled://`, `/ready` reports the backend as healthy and non-required:
+
+```json
+{"status": "ok", "detail": "disabled", "required": false}
+```
+
+Unsupported providers outside this classic set fail closed in `/ready` unless
+you replace them with explicit checks.
 
 ## Explicit Checks
 
 For unusual apps, pass explicit checks:
 
 ```python
-from celery_uptime import monitor, redis_check, sqs_check
+from celery_uptime import database_check, monitor, redis_check, sqs_check
 
 monitor(
     app,
@@ -99,7 +140,11 @@ monitor(
             secret_key="...",
         ),
         redis_check("backend", "redis://redis:6379/0"),
+        database_check("reporting-db", "postgresql://user:password@db:5432/app"),
     ],
     include_auto_checks=False,
 )
 ```
+
+Provider checks are connection-only. They do not write/read/delete Celery result
+records or mutate broker/backend data.
