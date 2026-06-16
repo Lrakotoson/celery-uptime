@@ -14,7 +14,7 @@ def route(app, path):
 
 
 def test_health_returns_ok_when_state_is_ready_and_does_not_call_checks():
-    def failing_check():
+    def failing_check() -> CheckResult:
         raise AssertionError("health must not call dependency checks")
 
     cache = ReadinessCache(stale_after=90)
@@ -33,7 +33,6 @@ def test_health_returns_ok_when_state_is_ready_and_does_not_call_checks():
     assert response.status_code == 200
     assert data["status"] == "ok"
     assert data["worker"] == {"pool": "prefork", "concurrency": 4}
-    failing_check  # keep the assertion target visible without executing it
 
 
 def test_ready_returns_not_checked_yet_before_first_probe():
@@ -118,7 +117,7 @@ def test_slow_check_times_out_and_is_cached():
         time.sleep(1)
         return CheckResult(name="broker", ok=True, detail="ok")
 
-    setattr(slow_check, "__celery_uptime_name__", "broker")
+    slow_check.__celery_uptime_name__ = "broker"
     cache = ReadinessCache(stale_after=90)
     runner = DependencyProbeRunner([slow_check], cache=cache, interval=30, timeout=0.01)
 

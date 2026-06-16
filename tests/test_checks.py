@@ -26,7 +26,11 @@ def test_redis_check_reports_missing_url():
 
 
 def test_redis_check_reports_missing_extra(monkeypatch):
-    monkeypatch.setattr(checks, "_lazy_import", lambda *_args: (_ for _ in ()).throw(checks.MissingExtra("redis")))
+    monkeypatch.setattr(
+        checks,
+        "_lazy_import",
+        lambda *_args: (_ for _ in ()).throw(checks.MissingExtraError("redis")),
+    )
 
     result = redis_check("backend", "redis://localhost:6379/0")()
 
