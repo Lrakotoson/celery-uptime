@@ -3,8 +3,7 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 if TYPE_CHECKING:
@@ -77,7 +76,7 @@ def redis_check(name: str, url: str | None, required: bool = True) -> HealthChec
                 client.ping()
             finally:
                 client.close()
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except Exception as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -111,7 +110,7 @@ def redis_sentinel_check(
             )
             client = sentinel.master_for(master_name)
             client.ping()
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except Exception as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -172,7 +171,7 @@ def sqs_check(
                 QueueUrl=queue_url,
                 AttributeNames=["QueueArn"],
             )
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except (botocore_exceptions.BotoCoreError, botocore_exceptions.ClientError) as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -197,7 +196,7 @@ def database_check(name: str, url: str | None, required: bool = True) -> HealthC
                     connection.execute(sqlalchemy.text("SELECT 1"))
             finally:
                 engine.dispose()
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except Exception as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -216,7 +215,7 @@ def django_database_check(name: str, required: bool = True) -> HealthCheck:
             with django_db.connection.cursor() as cursor:
                 cursor.execute("SELECT 1")
                 cursor.fetchone()
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except Exception as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -234,7 +233,7 @@ def django_cache_check(name: str, cache_alias: str = "default", required: bool =
             django_cache = _lazy_import("django.core.cache", "django")
             cache = django_cache.caches[cache_alias]
             cache.get("__celery_uptime_probe__")
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except Exception as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -258,7 +257,7 @@ def mongodb_check(name: str, url: str | None, required: bool = True) -> HealthCh
                 client.admin.command("ping")
             finally:
                 client.close()
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except Exception as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -284,7 +283,7 @@ def elasticsearch_check(name: str, url: str | None, required: bool = True) -> He
                 close = getattr(client, "close", None)
                 if close:
                     close()
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except Exception as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -310,7 +309,7 @@ def cassandra_check(name: str, url: str | None, required: bool = True) -> Health
                 session.execute("SELECT now() FROM system.local")
             finally:
                 cluster.shutdown()
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except Exception as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -339,7 +338,7 @@ def memcache_check(name: str, url: str | None, required: bool = True) -> HealthC
                 disconnect = getattr(client, "disconnect_all", None)
                 if disconnect:
                     disconnect()
-        except MissingExtra as exc:
+        except MissingExtraError as exc:
             return CheckResult(name=name, ok=not required, detail=str(exc), required=required)
         except Exception as exc:
             return CheckResult(name=name, ok=False, detail=str(exc), required=required)
@@ -377,7 +376,7 @@ def check_payload(result: CheckResult) -> dict[str, Any]:
     return payload
 
 
-class MissingExtra(ImportError):
+class MissingExtraError(ImportError):
     def __init__(self, extra: str) -> None:
         self.extra = extra
         super().__init__(f"missing_extra:{extra}")
@@ -388,7 +387,7 @@ def _lazy_import(module: str, extra: str) -> Any:
         return importlib.import_module(module)
     except ModuleNotFoundError as exc:
         if exc.name and (exc.name == module or module.startswith(f"{exc.name}.")):
-            raise MissingExtra(extra) from exc
+            raise MissingExtraError(extra) from exc
         raise
 
 
@@ -449,5 +448,5 @@ def _extra_from_module(module: str | None) -> str:
 
 
 def _named_check(name: str, check: HealthCheck) -> HealthCheck:
-    setattr(check, "__celery_uptime_name__", name)
+    check.__celery_uptime_name__ = name  # type: ignore[attr-defined]
     return check

@@ -26,7 +26,13 @@ from celery_uptime.checks import (
     sqs_check,
     unsupported_check,
 )
-from celery_uptime.server import DependencyProbeRunner, HealthState, ReadinessCache, UvicornHealthServer, create_health_app
+from celery_uptime.server import (
+    DependencyProbeRunner,
+    HealthState,
+    ReadinessCache,
+    UvicornHealthServer,
+    create_health_app,
+)
 
 
 @dataclass(frozen=True)
