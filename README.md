@@ -97,12 +97,32 @@ services:
       start_period: 40s
 ```
 
+If your image includes `curl`, the healthcheck can be shorter:
+
+```yaml
+services:
+  celery-worker:
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS --max-time 5 http://127.0.0.1:8090/health > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
 Use `/health` for Docker/container liveness. It does not run broker/backend
 checks and is the safer endpoint for long-running task workers. Use `/ready`
 from external monitoring systems such as Uptime Kuma when you want dependency
 visibility and alerting. Avoid wiring `/ready` failures directly to automatic
 worker restarts unless your task loss/retry behavior is intentionally designed
 for that.
+
+External readiness check examples:
+
+```bash
+curl -fsS --max-time 5 http://127.0.0.1:8090/health
+curl -fsS --max-time 5 http://127.0.0.1:8090/ready
+```
 
 `/ready` is served from a cache populated by a background probe loop, so HTTP
 requests do not block on broker/backend clients. Before the first probe it
@@ -163,3 +183,18 @@ monitor(
 
 Provider checks are connection-only. They do not write/read/delete Celery result
 records or mutate broker/backend data.
+
+## Publishing
+
+Publication checklist:
+
+```bash
+uv sync --all-extras --dev
+uv run pytest
+uv run ruff check .
+uv build
+uv run twine check dist/*
+```
+
+See `docs/PUBLISHING.md` for PyPI and TestPyPI upload commands. Keep tokens in
+local environment variables only; never commit `.env` files.
