@@ -1,5 +1,7 @@
 """Reusable HTTP health checks for Celery workers and beat."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from celery_uptime.checks import (
     CheckResult,
     HealthCheck,
@@ -18,10 +20,16 @@ from celery_uptime.checks import (
 )
 from celery_uptime.monitor import MonitorConfig, monitor
 
+try:
+    __version__ = version("celery-uptime")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
+
 __all__ = [
     "CheckResult",
     "HealthCheck",
     "MonitorConfig",
+    "__version__",
     "broker_connection_check",
     "cassandra_check",
     "database_check",
@@ -30,8 +38,8 @@ __all__ = [
     "django_database_check",
     "elasticsearch_check",
     "memcache_check",
-    "monitor",
     "mongodb_check",
+    "monitor",
     "redis_check",
     "redis_sentinel_check",
     "sqs_check",
