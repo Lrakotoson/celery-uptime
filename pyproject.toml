@@ -4,11 +4,43 @@ version = "0.1.0"
 description = "Embedded HTTP uptime checks for Celery worker and beat processes"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "BSD-3-Clause"
+keywords = [
+    "celery",
+    "healthcheck",
+    "readiness",
+    "uptime",
+    "docker",
+    "monitoring",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: Celery",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
 dependencies = [
     "celery>=5.3",
     "fastapi>=0.100",
     "uvicorn>=0.22",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Lrakotoson/celery-uptime"
+Repository = "https://github.com/Lrakotoson/celery-uptime"
+Issues = "https://github.com/Lrakotoson/celery-uptime/issues"
+Changelog = "https://github.com/Lrakotoson/celery-uptime/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 redis = [
@@ -53,7 +85,10 @@ all = [
 
 [dependency-groups]
 dev = [
+    "build>=1.2",
     "pytest>=8",
+    "ruff>=0.8",
+    "twine>=5.0",
 ]
 
 [tool.pytest.ini_options]
@@ -61,9 +96,19 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+celery_uptime = ["py.typed"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
