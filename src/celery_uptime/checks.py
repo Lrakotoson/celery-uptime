@@ -55,7 +55,7 @@ def broker_connection_check(
 
         return CheckResult(name=name, ok=True, detail=success_detail, required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def redis_check(name: str, url: str | None, required: bool = True) -> HealthCheck:
@@ -84,7 +84,7 @@ def redis_check(name: str, url: str | None, required: bool = True) -> HealthChec
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def redis_sentinel_check(
@@ -118,7 +118,7 @@ def redis_sentinel_check(
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def sqs_check(
@@ -179,7 +179,7 @@ def sqs_check(
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def database_check(name: str, url: str | None, required: bool = True) -> HealthCheck:
@@ -204,7 +204,7 @@ def database_check(name: str, url: str | None, required: bool = True) -> HealthC
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def django_database_check(name: str, required: bool = True) -> HealthCheck:
@@ -223,7 +223,7 @@ def django_database_check(name: str, required: bool = True) -> HealthCheck:
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def django_cache_check(name: str, cache_alias: str = "default", required: bool = True) -> HealthCheck:
@@ -241,7 +241,7 @@ def django_cache_check(name: str, cache_alias: str = "default", required: bool =
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def mongodb_check(name: str, url: str | None, required: bool = True) -> HealthCheck:
@@ -265,7 +265,7 @@ def mongodb_check(name: str, url: str | None, required: bool = True) -> HealthCh
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def elasticsearch_check(name: str, url: str | None, required: bool = True) -> HealthCheck:
@@ -291,7 +291,7 @@ def elasticsearch_check(name: str, url: str | None, required: bool = True) -> He
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def cassandra_check(name: str, url: str | None, required: bool = True) -> HealthCheck:
@@ -317,7 +317,7 @@ def cassandra_check(name: str, url: str | None, required: bool = True) -> Health
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def memcache_check(name: str, url: str | None, required: bool = True) -> HealthCheck:
@@ -346,7 +346,7 @@ def memcache_check(name: str, url: str | None, required: bool = True) -> HealthC
 
         return CheckResult(name=name, ok=True, detail="ok", required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def disabled_backend_check(name: str = "backend") -> HealthCheck:
@@ -355,7 +355,7 @@ def disabled_backend_check(name: str = "backend") -> HealthCheck:
     def check() -> CheckResult:
         return CheckResult(name=name, ok=True, detail="disabled", required=False)
 
-    return check
+    return _named_check(name, check)
 
 
 def unsupported_check(name: str, detail: str, required: bool = True) -> HealthCheck:
@@ -364,7 +364,7 @@ def unsupported_check(name: str, detail: str, required: bool = True) -> HealthCh
     def check() -> CheckResult:
         return CheckResult(name=name, ok=not required, detail=detail, required=required)
 
-    return check
+    return _named_check(name, check)
 
 
 def check_payload(result: CheckResult) -> dict[str, Any]:
@@ -446,3 +446,8 @@ def _extra_from_module(module: str | None) -> str:
     if module.startswith("boto"):
         return "sqs"
     return module.split(".", 1)[0].replace("_", "-")
+
+
+def _named_check(name: str, check: HealthCheck) -> HealthCheck:
+    setattr(check, "__celery_uptime_name__", name)
+    return check
