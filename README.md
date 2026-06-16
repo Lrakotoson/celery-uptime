@@ -75,6 +75,9 @@ Environment variables:
 - `CELERY_UPTIME_PORT=8090`
 - `CELERY_UPTIME_SERVICE=<celery app main>-celery-<worker|beat>`
 - `CELERY_UPTIME_LOG_LEVEL=warning`
+- `CELERY_UPTIME_CHECK_INTERVAL=30`
+- `CELERY_UPTIME_CHECK_TIMEOUT=5`
+- `CELERY_UPTIME_STALE_AFTER=90`
 
 Docker Compose example:
 
@@ -87,12 +90,24 @@ services:
     ports:
       - "49211:8090"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/ready', timeout=5).read()\" || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=5).read()\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 ```
+
+Use `/health` for Docker/container liveness. It does not run broker/backend
+checks and is the safer endpoint for long-running task workers. Use `/ready`
+from external monitoring systems such as Uptime Kuma when you want dependency
+visibility and alerting. Avoid wiring `/ready` failures directly to automatic
+worker restarts unless your task loss/retry behavior is intentionally designed
+for that.
+
+`/ready` is served from a cache populated by a background probe loop, so HTTP
+requests do not block on broker/backend clients. Before the first probe it
+returns `503` with `detail: "not_checked_yet"`. If the cached probe result is
+older than `CELERY_UPTIME_STALE_AFTER`, it returns `503` with `detail: "stale"`.
 
 ## Automatic Checks
 
