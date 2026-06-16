@@ -184,17 +184,3 @@ monitor(
 Provider checks are connection-only. They do not write/read/delete Celery result
 records or mutate broker/backend data.
 
-## Publishing
-
-Publication checklist:
-
-```bash
-uv sync --all-extras --dev
-uv run pytest
-uv run ruff check .
-uv build
-uv run twine check dist/*
-```
-
-See `docs/PUBLISHING.md` for PyPI and TestPyPI upload commands. Keep tokens in
-local environment variables only; never commit `.env` files.
