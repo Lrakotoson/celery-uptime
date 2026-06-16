@@ -24,6 +24,22 @@ class FakeServer:
         self.running = False
 
 
+class FakeProbeRunner:
+    starts = 0
+    stops = 0
+
+    def __init__(self, *_args, **_kwargs):
+        self.running = False
+
+    def start(self):
+        type(self).starts += 1
+        self.running = True
+
+    def stop(self):
+        type(self).stops += 1
+        self.running = False
+
+
 def passing_check(name="broker"):
     return lambda: CheckResult(name=name, ok=True, detail="ok")
 
@@ -75,7 +91,10 @@ def test_beat_start_uses_beat_process(monkeypatch):
 def test_worker_shutdown_stops_server(monkeypatch):
     FakeServer.starts = 0
     FakeServer.stops = 0
+    FakeProbeRunner.starts = 0
+    FakeProbeRunner.stops = 0
     monkeypatch.setattr(monitor_module, "UvicornHealthServer", FakeServer)
+    monkeypatch.setattr(monitor_module, "DependencyProbeRunner", FakeProbeRunner)
     app = Celery("test", broker="redis://localhost:6379/0", backend="redis://localhost:6379/1")
     uptime = monitor(app, checks=[passing_check()], include_auto_checks=False)
 
@@ -83,6 +102,8 @@ def test_worker_shutdown_stops_server(monkeypatch):
     uptime.stop()
 
     assert FakeServer.stops == 1
+    assert FakeProbeRunner.starts == 1
+    assert FakeProbeRunner.stops == 1
 
 
 def test_disabled_monitor_does_not_register(monkeypatch):
