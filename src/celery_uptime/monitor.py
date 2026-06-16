@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import os
 import threading
+import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -25,7 +26,7 @@ from celery_uptime.checks import (
     sqs_check,
     unsupported_check,
 )
-from celery_uptime.server import HealthState, UvicornHealthServer, create_health_app
+from celery_uptime.server import DependencyProbeRunner, HealthState, ReadinessCache, UvicornHealthServer, create_health_app
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,9 @@ class MonitorConfig:
     service: str | None = None
     log_level: str = "warning"
     enabled: bool = True
+    check_interval: float = 30
+    check_timeout: float = 5
+    stale_after: float = 90
 
     @classmethod
     def from_env(cls) -> MonitorConfig:
@@ -46,6 +50,9 @@ class MonitorConfig:
             service=os.getenv("CELERY_UPTIME_SERVICE"),
             log_level=os.getenv("CELERY_UPTIME_LOG_LEVEL", "warning"),
             enabled=_env_bool("CELERY_UPTIME_ENABLED", default=True),
+            check_interval=float(os.getenv("CELERY_UPTIME_CHECK_INTERVAL", "30")),
+            check_timeout=float(os.getenv("CELERY_UPTIME_CHECK_TIMEOUT", "5")),
+            stale_after=float(os.getenv("CELERY_UPTIME_STALE_AFTER", "90")),
         )
 
 
@@ -64,6 +71,7 @@ class CeleryUptimeMonitor:
         self._explicit_checks = list(checks or [])
         self._include_auto_checks = include_auto_checks
         self._server: UvicornHealthServer | None = None
+        self._probe_runner: DependencyProbeRunner | None = None
         self._lock = threading.Lock()
 
     def register(self) -> CeleryUptimeMonitor:
@@ -95,13 +103,16 @@ class CeleryUptimeMonitor:
 
     def stop(self) -> None:
         with self._lock:
+            if self._probe_runner is not None:
+                self._probe_runner.stop()
+                self._probe_runner = None
             if self._server is None:
                 return
             self._server.stop()
             self._server = None
 
-    def _on_worker_ready(self, **_: Any) -> None:
-        self.start(process="worker")
+    def _on_worker_ready(self, sender: Any = None, **_: Any) -> None:
+        self.start(process="worker", worker=_worker_info(sender))
 
     def _on_beat_init(self, **_: Any) -> None:
         self.start(process="beat")
@@ -109,17 +120,20 @@ class CeleryUptimeMonitor:
     def _on_worker_shutdown(self, **_: Any) -> None:
         self.stop()
 
-    def start(self, process: str) -> None:
+    def start(self, process: str, worker: dict[str, object] | None = None) -> None:
         with self._lock:
             if self._server is not None and self._server.running:
                 return
 
             service = self.config.service or f"{self.celery_app.main}-celery-{process}"
+            checks = self._checks()
+            readiness = ReadinessCache(stale_after=self.config.stale_after)
             state = HealthState(
                 service=service,
                 process=process,
                 ready=True,
-                checks=self._checks(),
+                readiness=readiness,
+                worker=worker,
             )
             app = create_health_app(state)
             self._server = UvicornHealthServer(
@@ -128,7 +142,14 @@ class CeleryUptimeMonitor:
                 port=self.config.port,
                 log_level=self.config.log_level,
             )
+            self._probe_runner = DependencyProbeRunner(
+                checks=checks,
+                cache=readiness,
+                interval=self.config.check_interval,
+                timeout=self.config.check_timeout,
+            )
             self._server.start()
+            self._probe_runner.start()
 
     def _checks(self) -> list[HealthCheck]:
         checks = list(self._explicit_checks)
@@ -311,3 +332,17 @@ def _env_bool(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.lower() not in {"0", "false", "no", "off"}
+
+
+def _worker_info(sender: Any) -> dict[str, object]:
+    controller = getattr(sender, "controller", None)
+    pool = getattr(sender, "pool", None) or getattr(controller, "pool", None)
+    concurrency = getattr(controller, "concurrency", None)
+    if concurrency is None and pool is not None:
+        concurrency = getattr(pool, "limit", None)
+
+    return {
+        "ready_at": time.time(),
+        "pool": type(pool).__name__ if pool is not None else None,
+        "concurrency": concurrency,
+    }
