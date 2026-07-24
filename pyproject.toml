@@ -1,6 +1,6 @@
 [project]
 name = "celery-uptime"
-version = "0.0.2"
+version = "0.0.3"
 description = "Embedded HTTP uptime checks for Celery worker and beat processes"
 readme = "README.md"
 requires-python = ">=3.10"
