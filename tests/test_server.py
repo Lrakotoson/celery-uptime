@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import json
 import subprocess
 import sys
@@ -15,6 +17,19 @@ def route(app, path):
     return next(route.endpoint for route in app.routes if getattr(route, "path", None) == path)
 
 
+def call_route(app, path):
+    return asyncio.run(route(app, path)())
+
+
+def test_health_routes_do_not_use_the_threadpool():
+    app = create_health_app(
+        HealthState(service="svc", process="worker", ready=True, readiness=ReadinessCache(stale_after=90))
+    )
+
+    assert inspect.iscoroutinefunction(route(app, "/health"))
+    assert inspect.iscoroutinefunction(route(app, "/ready"))
+
+
 def test_health_returns_ok_when_state_is_ready_and_does_not_call_checks():
     def failing_check() -> CheckResult:
         raise AssertionError("health must not call dependency checks")
@@ -29,7 +44,7 @@ def test_health_returns_ok_when_state_is_ready_and_does_not_call_checks():
             worker={"pool": "prefork", "concurrency": 4},
         )
     )
-    response = route(app, "/health")()
+    response = call_route(app, "/health")
 
     data = response_json(response)
     assert response.status_code == 200
@@ -41,7 +56,7 @@ def test_ready_returns_not_checked_yet_before_first_probe():
     cache = ReadinessCache(stale_after=90)
     app = create_health_app(HealthState(service="svc", process="worker", ready=True, readiness=cache))
 
-    response = route(app, "/ready")()
+    response = call_route(app, "/ready")
 
     data = response_json(response)
     assert response.status_code == 503
@@ -60,7 +75,7 @@ def test_ready_returns_cached_success_immediately():
     )
     app = create_health_app(HealthState(service="svc", process="worker", ready=True, readiness=cache))
 
-    response = route(app, "/ready")()
+    response = call_route(app, "/ready")
 
     data = response_json(response)
     assert response.status_code == 200
@@ -74,7 +89,7 @@ def test_ready_returns_cached_failure_immediately():
     cache.update([CheckResult(name="broker", ok=False, detail="down")], duration_seconds=0.01)
     app = create_health_app(HealthState(service="svc", process="worker", ready=True, readiness=cache))
 
-    response = route(app, "/ready")()
+    response = call_route(app, "/ready")
 
     data = response_json(response)
     assert response.status_code == 503
@@ -87,7 +102,7 @@ def test_ready_returns_stale_when_cache_is_too_old():
     cache.update([CheckResult(name="broker", ok=True, detail="ok")], duration_seconds=0.01, checked_at=time.time() - 1)
     app = create_health_app(HealthState(service="svc", process="worker", ready=True, readiness=cache))
 
-    response = route(app, "/ready")()
+    response = call_route(app, "/ready")
 
     data = response_json(response)
     assert response.status_code == 503
@@ -107,7 +122,7 @@ def test_busy_worker_payload_does_not_make_ready_unhealthy():
         )
     )
 
-    response = route(app, "/ready")()
+    response = call_route(app, "/ready")
 
     data = response_json(response)
     assert response.status_code == 200

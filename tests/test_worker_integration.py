@@ -119,7 +119,19 @@ def test_worker_pool_remains_responsive_and_releases_health_port(tmp_path, pool,
             result = client.send_task("celery_uptime.integration.sleep", args=[0.01])
             assert result.get(timeout=15)["seconds"] == 0.01
 
-            results = [client.send_task("celery_uptime.integration.sleep", args=[0.25]) for _ in range(concurrency)]
+            task_duration = 1 if pool == "gevent" else 0.25
+            results = [
+                client.send_task("celery_uptime.integration.sleep", args=[task_duration]) for _ in range(concurrency)
+            ]
+            if pool == "gevent":
+                endpoint_latencies = []
+                for _ in range(20):
+                    for endpoint in ("health", "ready"):
+                        started = time.monotonic()
+                        assert get_json(f"http://127.0.0.1:{port}/{endpoint}")["status"] == "ok"
+                        endpoint_latencies.append(time.monotonic() - started)
+                assert max(endpoint_latencies) < 0.5
+
             timings = [result.get(timeout=15) for result in results]
             if concurrency > 1:
                 assert max(timing["started_at"] for timing in timings) < min(
