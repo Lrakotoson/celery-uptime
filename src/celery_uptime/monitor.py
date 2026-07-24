@@ -34,6 +34,8 @@ from celery_uptime.server import (
     create_health_app,
 )
 
+_MONITOR_ATTRIBUTE = "_celery_uptime_monitor"
+
 
 @dataclass(frozen=True)
 class MonitorConfig:
@@ -78,6 +80,7 @@ class CeleryUptimeMonitor:
         self._include_auto_checks = include_auto_checks
         self._server: UvicornHealthServer | None = None
         self._probe_runner: DependencyProbeRunner | None = None
+        self._state: HealthState | None = None
         self._lock = threading.Lock()
 
     def register(self) -> CeleryUptimeMonitor:
@@ -109,6 +112,8 @@ class CeleryUptimeMonitor:
 
     def stop(self) -> None:
         with self._lock:
+            if self._state is not None:
+                self._state.ready = False
             if self._probe_runner is not None:
                 self._probe_runner.stop()
                 self._probe_runner = None
@@ -134,14 +139,14 @@ class CeleryUptimeMonitor:
             service = self.config.service or f"{self.celery_app.main}-celery-{process}"
             checks = self._checks()
             readiness = ReadinessCache(stale_after=self.config.stale_after)
-            state = HealthState(
+            self._state = HealthState(
                 service=service,
                 process=process,
                 ready=True,
                 readiness=readiness,
                 worker=worker,
             )
-            app = create_health_app(state)
+            app = create_health_app(self._state)
             self._server = UvicornHealthServer(
                 app=app,
                 host=self.config.host,
@@ -173,12 +178,18 @@ def monitor(
 ) -> CeleryUptimeMonitor:
     """Attach an embedded health server to Celery worker and beat commands."""
 
-    return CeleryUptimeMonitor(
+    existing = getattr(celery_app, _MONITOR_ATTRIBUTE, None)
+    if isinstance(existing, CeleryUptimeMonitor):
+        return existing
+
+    uptime = CeleryUptimeMonitor(
         celery_app=celery_app,
         checks=checks,
         include_auto_checks=include_auto_checks,
         config=config,
-    ).register()
+    )
+    setattr(celery_app, _MONITOR_ATTRIBUTE, uptime)
+    return uptime.register()
 
 
 def auto_checks(celery_app: Celery) -> list[HealthCheck]:
