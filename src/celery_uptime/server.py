@@ -204,7 +204,7 @@ def create_health_app(state: HealthState) -> FastAPI:
     app = FastAPI(title="celery uptime")
 
     @app.get("/health")
-    def health() -> JSONResponse:
+    async def health() -> JSONResponse:
         return JSONResponse(
             content={
                 "status": "ok" if state.ready else "error",
@@ -216,7 +216,7 @@ def create_health_app(state: HealthState) -> FastAPI:
         )
 
     @app.get("/ready")
-    def ready() -> JSONResponse:
+    async def ready() -> JSONResponse:
         snapshot = state.readiness.snapshot()
         checks = {
             "celery_process": {
