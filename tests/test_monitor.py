@@ -54,6 +54,15 @@ def test_monitor_registers_without_starting_server(monkeypatch):
     assert FakeServer.starts == 0
 
 
+def test_monitor_registration_is_idempotent():
+    app = Celery("test", broker="redis://localhost:6379/0", backend="redis://localhost:6379/1")
+
+    first = monitor(app, checks=[passing_check()], include_auto_checks=False)
+    second = monitor(app, checks=[passing_check()], include_auto_checks=False)
+
+    assert second is first
+
+
 def test_worker_ready_starts_one_server(monkeypatch):
     FakeServer.starts = 0
     monkeypatch.setattr(monitor_module, "UvicornHealthServer", FakeServer)
@@ -101,6 +110,8 @@ def test_worker_shutdown_stops_server(monkeypatch):
     uptime.start("worker")
     uptime.stop()
 
+    assert uptime._state is not None
+    assert uptime._state.ready is False
     assert FakeServer.stops == 1
     assert FakeProbeRunner.starts == 1
     assert FakeProbeRunner.stops == 1

@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 import time
 
 from celery_uptime.checks import CheckResult
@@ -137,3 +139,36 @@ def test_probe_runner_start_is_idempotent():
 
     assert runner._thread is first_thread
     runner.stop()
+
+
+def test_uvicorn_server_uses_native_thread_after_gevent_monkey_patch():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+from gevent import monkey
+monkey.patch_all()
+
+from fastapi import FastAPI
+from gevent.monkey import get_original
+
+from celery_uptime.server import UvicornHealthServer
+
+server = UvicornHealthServer(FastAPI(), "127.0.0.1", 0, "warning")
+native_ident = get_original("_thread", "get_ident")
+main_ident = native_ident()
+server_ident = []
+server._server.run = lambda: server_ident.append(native_ident())
+server.start()
+server._thread.join(timeout=1)
+
+assert server_ident and server_ident[0] != main_ident
+""",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
