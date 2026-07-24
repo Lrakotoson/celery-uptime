@@ -1,16 +1,73 @@
 from __future__ import annotations
 
+import _thread
+import importlib
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Queue
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 
 from celery_uptime.checks import CheckResult, HealthCheck, check_payload
+
+
+def _original_thread_primitive(name: str) -> Any:
+    try:
+        monkey = importlib.import_module("gevent.monkey")
+    except ImportError:
+        return getattr(_thread, name)
+    if monkey.is_module_patched("_thread"):
+        return monkey.get_original("_thread", name)
+    return getattr(_thread, name)
+
+
+_allocate_native_lock = _original_thread_primitive("allocate_lock")
+_start_native_thread = _original_thread_primitive("start_new_thread")
+
+
+class _NativeThread:
+    def __init__(self, target: Callable[[], None]) -> None:
+        self._target = target
+        self._done = _allocate_native_lock()
+        self._done.acquire()
+        self._started = False
+
+    def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        try:
+            _start_native_thread(self._run, ())
+        except BaseException:
+            self._started = False
+            raise
+
+    def _run(self) -> None:
+        try:
+            self._target()
+        finally:
+            self._done.release()
+
+    def is_alive(self) -> bool:
+        return self._started and self._done.locked()
+
+    def join(self, timeout: float | None = None) -> None:
+        if not self._started:
+            return
+        acquired = self._done.acquire() if timeout is None else self._done.acquire(timeout=timeout)
+        if acquired:
+            self._done.release()
+
+
+@contextmanager
+def _without_signal_handlers():
+    yield
 
 
 @dataclass
@@ -37,7 +94,7 @@ class ReadinessCache:
             duration_seconds=None,
             checks={},
         )
-        self._lock = threading.Lock()
+        self._lock = _allocate_native_lock()
 
     def update(
         self,
@@ -215,7 +272,11 @@ class UvicornHealthServer:
             lifespan="off",
         )
         self._server = uvicorn.Server(self._config)
-        self._thread: threading.Thread | None = None
+        if hasattr(self._server, "install_signal_handlers"):
+            self._server.install_signal_handlers = lambda: None
+        if hasattr(self._server, "capture_signals"):
+            self._server.capture_signals = _without_signal_handlers
+        self._thread: _NativeThread | None = None
 
     @property
     def running(self) -> bool:
@@ -225,11 +286,7 @@ class UvicornHealthServer:
         if self.running:
             return
 
-        self._thread = threading.Thread(
-            target=self._server.run,
-            name="celery-uptime",
-            daemon=True,
-        )
+        self._thread = _NativeThread(target=self._server.run)
         self._thread.start()
 
     def stop(self) -> None:
